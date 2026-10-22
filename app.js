@@ -87,6 +87,10 @@ const ragBtn = document.getElementById('rag-btn');
 const ragResults = document.getElementById('rag-results');
 const ragStatus = document.getElementById('rag-status');
 
+let savedItemIdentities = new Set();
+const pendingSaveItems = new Map();
+let nextSaveButtonId = 0;
+
 // ============================================
 // SETUP BANNER DETECTION
 // ============================================
@@ -287,8 +291,78 @@ function showApp(user) {
     if (loginScreen) loginScreen.classList.add('hidden');
     if (appScreen) appScreen.classList.remove('hidden');
     if (userEmailSpan) userEmailSpan.textContent = user.email;
+    loadSavedItemIdentities();
     // Check search readiness when user logs in
     checkSearchReadiness();
+}
+
+function savedItemIdentity(item) {
+    return JSON.stringify([
+        item.item_type,
+        item.title,
+        item.speaker || '',
+        item.content,
+        item.source_url || '',
+    ]);
+}
+
+async function loadSavedItemIdentities() {
+    if (!supabaseClient) return;
+
+    const { data, error } = await supabaseClient
+        .from('saved_items')
+        .select('item_type, title, speaker, content, source_url');
+
+    if (error) {
+        console.warn('Could not load saved item state:', error.message);
+        return;
+    }
+
+    savedItemIdentities = new Set((data || []).map(savedItemIdentity));
+}
+
+function saveButtonHtml(item) {
+    const saveItem = {
+        item_type: item.type,
+        title: item.title || 'Saved item',
+        speaker: item.speaker || null,
+        content: item.content || '',
+        source_url: item.url || null,
+    };
+    const identity = savedItemIdentity(saveItem);
+    const isSaved = savedItemIdentities.has(identity);
+    const buttonId = String(++nextSaveButtonId);
+    pendingSaveItems.set(buttonId, saveItem);
+
+    return `<button class="save-star-btn${isSaved ? ' is-saved' : ''}" type="button"
+        data-save-id="${buttonId}" aria-label="${isSaved ? 'Already saved' : 'Save this item'}"
+        aria-pressed="${isSaved}" title="${isSaved ? 'Saved' : 'Save'}"${isSaved ? ' disabled' : ''}>${isSaved ? '★' : '☆'}</button>`;
+}
+
+async function saveResultItem(button) {
+    const item = pendingSaveItems.get(button.dataset.saveId);
+    if (!item || !supabaseClient || button.disabled) return;
+
+    button.disabled = true;
+    button.textContent = '…';
+    button.title = 'Saving…';
+
+    const { error } = await supabaseClient.from('saved_items').insert(item);
+    if (error) {
+        button.disabled = false;
+        button.textContent = '☆';
+        button.title = error.message;
+        button.setAttribute('aria-label', 'Save failed: ' + error.message);
+        console.error('Could not save result:', error.message);
+        return;
+    }
+
+    savedItemIdentities.add(savedItemIdentity(item));
+    button.textContent = '★';
+    button.classList.add('is-saved');
+    button.title = 'Saved';
+    button.setAttribute('aria-label', 'Saved');
+    button.setAttribute('aria-pressed', 'true');
 }
 
 function showMessage(text, type) {
@@ -443,17 +517,24 @@ async function keywordSearch() {
                     title: row.title || 'Unknown Talk',
                     speaker: row.speaker || 'Unknown Speaker',
                     url: row.url || '',
-                    sentences: []
+                    sentences: [],
+                    rawSentences: []
                 };
             }
             talks[talkId].sentences.push(highlightKeyword(row.text, query));
+            talks[talkId].rawSentences.push(row.text);
         }
 
         let html = '';
         for (const talk of Object.values(talks)) {
             html += `<div class="result-card">
-                <div class="result-title"><a href="${escapeHtml(talk.url)}" target="_blank" class="result-title-link">${escapeHtml(talk.title)}</a></div>
-                <div class="result-speaker">by ${escapeHtml(talk.speaker)}</div>
+                <div class="result-card-header">
+                    <div>
+                        <div class="result-title"><a href="${escapeHtml(talk.url)}" target="_blank" rel="noopener noreferrer" class="result-title-link">${escapeHtml(talk.title)}</a></div>
+                        <div class="result-speaker">by ${escapeHtml(talk.speaker)}</div>
+                    </div>
+                    ${saveButtonHtml({ type: 'talk', title: talk.title, speaker: talk.speaker, content: talk.rawSentences.slice(0, 3).join('\n'), url: talk.url })}
+                </div>
                 <div class="result-sentences">${talk.sentences.slice(0, 3).join('<br>')}</div>
             </div>`;
         }
@@ -500,13 +581,16 @@ async function semanticSearch() {
         for (const result of results) {
             const sim = result.similarity;
             const badge = similarityBadge(sim);
+            const resultTitle = result.url
+                ? `<a href="${escapeHtml(result.url)}" target="_blank" rel="noopener noreferrer" class="result-title-link">${escapeHtml(result.title || 'Untitled talk')}</a>`
+                : escapeHtml(result.title || 'Untitled talk');
             html += `<div class="result-card">
                 <div class="result-card-header">
                     <div>
-                        <div class="result-title"><a href="${escapeHtml(result.url)}" target="_blank" class="result-title-link">${escapeHtml(result.title)}</a></div>
+                        <div class="result-title">${resultTitle}</div>
                         <div class="result-speaker">by ${escapeHtml(result.speaker)}</div>
                     </div>
-                    ${badge}
+                    <div class="result-card-actions">${badge}${saveButtonHtml({ type: 'quote', title: result.title, speaker: result.speaker, content: result.text, url: result.url })}</div>
                 </div>
                 <div class="result-sentences">${escapeHtml(result.text)}</div>
             </div>`;
@@ -548,7 +632,7 @@ async function getQuotes() {
                         <div class="result-title">${escapeHtml(result.title || 'Untitled talk')}</div>
                         <div class="result-speaker">by ${escapeHtml(result.speaker || 'Unknown speaker')}</div>
                     </div>
-                    ${similarityBadge(result.similarity)}
+                    <div class="result-card-actions">${similarityBadge(result.similarity)}${saveButtonHtml({ type: 'quote', title: result.title, speaker: result.speaker, content: result.text })}</div>
                 </div>
                 <blockquote class="result-sentences">“${escapeHtml(result.text || '')}”</blockquote>
             </div>`;
@@ -597,22 +681,28 @@ async function askQuestion() {
         let html = `<div class="result-card rag-answer rag-${simClass}">
             <div class="result-card-header">
                 <div class="result-title">AI Answer</div>
-                ${overallBadge}
+                <div class="result-card-actions">${overallBadge}${saveButtonHtml({ type: 'answer', title: 'AI Answer', content: answer })}</div>
             </div>
             <div class="result-sentences">${escapeHtml(answer)}</div>
         </div>`;
 
         // Show source talks with per-talk similarity badges and links
         html += '<div class="result-sources"><strong>Sources:</strong></div>';
+        const fullTalkById = new Map(enrichedTalks.map((talk) => [talk.talk_id, talk]));
         for (const talk of topTalks) {
             const talkBadge = similarityBadge(talk.avgSimilarity);
+            const fullTalk = fullTalkById.get(talk.talk_id);
+            const sourceUrl = fullTalk?.url || talk.url || '';
+            const sourceTitle = sourceUrl
+                ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer" class="result-title-link">${escapeHtml(talk.title)}</a>`
+                : escapeHtml(talk.title || 'Untitled talk');
             html += `<div class="result-card result-source">
                 <div class="result-card-header">
                     <div>
-                        <div class="result-title"><a href="${escapeHtml(talk.url)}" target="_blank" class="result-title-link">${escapeHtml(talk.title)}</a></div>
+                        <div class="result-title">${sourceTitle}</div>
                         <div class="result-speaker">by ${escapeHtml(talk.speaker)}</div>
                     </div>
-                    ${talkBadge}
+                    <div class="result-card-actions">${talkBadge}${saveButtonHtml({ type: 'talk', title: talk.title, speaker: talk.speaker, content: fullTalk?.text || talk.text, url: sourceUrl })}</div>
                 </div>
             </div>`;
         }
@@ -700,7 +790,7 @@ async function fetchFullTalkText(talks) {
 
     const { data, error } = await supabaseClient
         .from('sentence_embeddings')
-        .select('talk_id, sentence_num, text')
+        .select('talk_id, sentence_num, text, url')
         .in('talk_id', talkIds)
         .order('talk_id')
         .order('sentence_num');
@@ -712,14 +802,17 @@ async function fetchFullTalkText(talks) {
 
     // Group fetched sentences by talk_id
     const fullTextMap = {};
+    const fullUrlMap = {};
     for (const row of data) {
         if (!fullTextMap[row.talk_id]) fullTextMap[row.talk_id] = [];
         fullTextMap[row.talk_id].push(row.text);
+        if (row.url) fullUrlMap[row.talk_id] = row.url;
     }
 
     // Replace snippet text with full talk text
     return talks.map(talk => ({
         ...talk,
+        url: fullUrlMap[talk.talk_id] || talk.url,
         text: fullTextMap[talk.talk_id]
             ? fullTextMap[talk.talk_id].join(' ')
             : talk.text
@@ -748,12 +841,25 @@ async function generateAnswer(question, contextTalks) {
 
 function showResults(type, html) {
     const el = document.getElementById(`${type}-results`);
-    if (el) el.innerHTML = html;
+    if (!el) return;
+
+    el.querySelectorAll('[data-save-id]').forEach((button) => {
+        pendingSaveItems.delete(button.dataset.saveId);
+    });
+    el.innerHTML = html;
+    el.querySelectorAll('[data-save-id]').forEach((button) => {
+        button.addEventListener('click', () => saveResultItem(button));
+    });
 }
 
 function clearResults(type) {
     const el = document.getElementById(`${type}-results`);
-    if (el) el.innerHTML = '<div class="searching">Searching...</div>';
+    if (!el) return;
+
+    el.querySelectorAll('[data-save-id]').forEach((button) => {
+        pendingSaveItems.delete(button.dataset.saveId);
+    });
+    el.innerHTML = '<div class="searching">Searching...</div>';
 }
 
 function escapeHtml(text) {
