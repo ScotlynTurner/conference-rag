@@ -79,6 +79,9 @@ const semanticBtn = document.getElementById('semantic-btn');
 const semanticResults = document.getElementById('semantic-results');
 const semanticStatus = document.getElementById('semantic-status');
 
+const quoteInput = document.getElementById('quote-input');
+const quoteBtn = document.getElementById('quote-btn');
+
 const ragInput = document.getElementById('rag-input');
 const ragBtn = document.getElementById('rag-btn');
 const ragResults = document.getElementById('rag-results');
@@ -349,6 +352,7 @@ async function checkSearchReadiness() {
             }
         }
         setSearchReady('semantic', semanticReady);
+        setSearchReady('quote', semanticReady);
 
         // --- 1 generate-answer call (only if semantic pipeline is ready) ---
         if (!semanticReady) {
@@ -367,6 +371,7 @@ async function checkSearchReadiness() {
         console.log('Readiness check failed:', err.message);
         setSearchReady('keyword', false);
         setSearchReady('semantic', false);
+        setSearchReady('quote', false);
         setSearchReady('rag', false);
     } finally {
         readinessCheckRunning = false;
@@ -516,6 +521,47 @@ async function semanticSearch() {
 }
 
 // ============================================
+// GET A QUOTE
+// ============================================
+
+async function getQuotes() {
+    const query = quoteInput ? quoteInput.value.trim() : '';
+    if (!query || !supabaseClient) return;
+
+    showLoading(true);
+    clearResults('quote');
+
+    try {
+        const embedding = await getEmbedding(query);
+        const results = await searchSentences(embedding, 5);
+
+        if (!results || results.length === 0) {
+            showResults('quote', '<div class="no-results">No matching quotes found. Try another question or quote fragment.</div>');
+            return;
+        }
+
+        let html = '';
+        for (const result of results) {
+            html += `<div class="result-card quote-result">
+                <div class="result-card-header">
+                    <div>
+                        <div class="result-title">${escapeHtml(result.title || 'Untitled talk')}</div>
+                        <div class="result-speaker">by ${escapeHtml(result.speaker || 'Unknown speaker')}</div>
+                    </div>
+                    ${similarityBadge(result.similarity)}
+                </div>
+                <blockquote class="result-sentences">“${escapeHtml(result.text || '')}”</blockquote>
+            </div>`;
+        }
+        showResults('quote', html);
+    } catch (error) {
+        showResults('quote', `<div class="result-error">Error: ${escapeHtml(error.message)}</div>`);
+    } finally {
+        showLoading(false);
+    }
+}
+
+// ============================================
 // RAG (ASK A QUESTION)
 // ============================================
 
@@ -597,12 +643,12 @@ async function getEmbedding(text) {
 }
 
 // Search sentences using vector similarity
-async function searchSentences(embedding) {
+async function searchSentences(embedding, matchCount = 20) {
     if (!supabaseClient) throw new Error('Supabase not configured');
 
     const { data, error } = await supabaseClient.rpc('match_sentences', {
         query_embedding: embedding,
-        match_count: 20
+        match_count: matchCount
     });
 
     if (error) throw new Error(`Database search failed: ${error.message}`);
@@ -744,6 +790,12 @@ if (keywordInput) keywordInput.addEventListener('keypress', (e) => {
 if (semanticBtn) semanticBtn.addEventListener('click', semanticSearch);
 if (semanticInput) semanticInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') semanticSearch();
+});
+
+// Quote search
+if (quoteBtn) quoteBtn.addEventListener('click', getQuotes);
+if (quoteInput) quoteInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') getQuotes();
 });
 
 // RAG search

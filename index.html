@@ -117,7 +117,23 @@
                     <div class="search-results" id="semantic-results"></div>
                 </div>
 
-                <!-- Panel 3: RAG (Ask a Question) -->
+                <!-- Panel 3: Get a Quote -->
+                <div class="search-panel" id="quote-panel">
+                    <div class="panel-header">
+                        <h3>💬 Get a Quote</h3>
+                        <span class="status-badge not-ready" id="quote-status">🔴 Not Ready</span>
+                    </div>
+                    <p class="panel-description">Ask a question or paste part of a quote to find the five closest
+                        excerpts from conference talks.</p>
+                    <div class="panel-input">
+                        <input type="text" id="quote-input"
+                            placeholder="Ask a question or search for part of a quote..." autocomplete="off" disabled />
+                        <button id="quote-btn" class="btn-primary" disabled>Find Quotes</button>
+                    </div>
+                    <div class="search-results" id="quote-results"></div>
+                </div>
+
+                <!-- Panel 4: RAG (Ask a Question) -->
                 <div class="search-panel" id="rag-panel">
                     <div class="panel-header">
                         <h3>🤖 Ask a Question (RAG)</h3>
